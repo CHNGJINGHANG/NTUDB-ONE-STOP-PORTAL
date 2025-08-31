@@ -61,6 +61,12 @@ class Config:
                 "deadline": "2024-09-07"
 
             },
+            "Team Bio Data": {
+                "url": "https://forms.gle/cEEvVZuoNfjDZwxv5",
+                "description": "Complete your team member profile information",
+                "priority": "medium",
+                "deadline": "2024-09-20"
+            },
             "Senior Gym Tracker": {
                 "url": "https://docs.google.com/spreadsheets/d/1FmFI5icuGGF6PISteEWNwTlwumZBtCMpPn9KDCFS2sg/edit?usp=sharing",
                 "description": "Track your gym sessions and fitness progress",
@@ -864,4 +870,5 @@ def main():
         render_footer()
 
 if __name__ == "__main__":
+
     main()
