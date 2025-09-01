@@ -1,17 +1,127 @@
 import streamlit as st
-import pandas as pd
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 import io
 import csv
+import shutil
+import re
+import secrets
+import string
+
+# --- VALIDATION FUNCTIONS ---
+def validate_portal_name(name: str) -> tuple[bool, str]:
+    """Validate portal name"""
+    if not name or not name.strip():
+        return False, "Portal name cannot be empty"
+    
+    name = name.strip()
+    if len(name) < 2 or len(name) > 50:
+        return False, "Portal name must be between 2-50 characters"
+    
+    if not re.match(r'^[a-zA-Z0-9\s_-]+$', name):
+        return False, "Portal name can only contain letters, numbers, spaces, underscores, and hyphens"
+    
+    return True, ""
+
+def validate_password(password: str) -> tuple[bool, str]:
+    """Validate password strength"""
+    if not password:
+        return False, "Password cannot be empty"
+    
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one number"
+    
+    return True, ""
+
+def validate_url(url: str) -> tuple[bool, str]:
+    """Validate URL format"""
+    if not url or not url.strip():
+        return False, "URL cannot be empty"
+    
+    url = url.strip()
+    url_pattern = re.compile(
+        r'^https?://'  # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+        r'(?::\d+)?'  # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    
+    if not url_pattern.match(url):
+        return False, "Please enter a valid URL (must start with http:// or https://)"
+    
+    return True, ""
+
+def validate_member_name(name: str) -> tuple[bool, str]:
+    """Validate member name"""
+    if not name or not name.strip():
+        return False, "Member name cannot be empty"
+    
+    name = name.strip()
+    if len(name) < 2 or len(name) > 100:
+        return False, "Member name must be between 2-100 characters"
+    
+    if not re.match(r'^[a-zA-Z0-9\s._-]+$', name):
+        return False, "Member name can only contain letters, numbers, spaces, dots, underscores, and hyphens"
+    
+    return True, ""
+
+def sanitize_html(text: str) -> str:
+    """Basic HTML sanitization"""
+    if not text:
+        return ""
+    
+    # Replace potentially dangerous characters
+    replacements = {
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#x27;',
+        '&': '&amp;'
+    }
+    
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    
+    return text
+
+def generate_secure_password(length: int = 12) -> str:
+    """Generate a secure random password"""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    password = ''.join(secrets.choice(alphabet) for _ in range(length))
+    return password
 
 # --- DATA MANAGER ---
 class DataManager:
     def __init__(self, filename="portal_data.json"):
-        self.filename = filename
+        # Validate filename
+        self.filename = self._validate_filename(filename)
         self.data = self.load_data()
+    
+    def _validate_filename(self, filename: str) -> str:
+        """Validate and sanitize filename"""
+        # Remove any path traversal attempts
+        filename = Path(filename).name
+        
+        # Ensure it's a .json file
+        if not filename.endswith('.json'):
+            filename += '.json'
+        
+        # Sanitize filename
+        filename = re.sub(r'[^\w\-_\.]', '_', filename)
+        
+        return filename
     
     def load_data(self) -> Dict:
         """Load data from JSON file or create default structure"""
@@ -21,7 +131,7 @@ class DataManager:
                     data = json.load(f)
                     # Ensure all required keys exist
                     default_structure = {
-                        "passwords": {"APH": "NTUDB#247365"},
+                        "passwords": {"APH": generate_secure_password()},
                         "resources": {"APH": [], "Junior": [], "Senior": []},
                         "members": {"APH": ["admin"], "Junior": [], "Senior": []},
                         "user_progress": {"APH": {}, "Junior": {}, "Senior": {}},
@@ -31,12 +141,13 @@ class DataManager:
                         if key not in data:
                             data[key] = value
                     return data
-            except (json.JSONDecodeError, IOError):
-                pass
+            except (json.JSONDecodeError, IOError) as e:
+                st.error(f"Failed to load data file: {e}")
+                st.info("Creating new data file...")
         
-        # Default structure
+        # Default structure with secure password
         return {
-            "passwords": {"APH": "NTUDB#247365"},
+            "passwords": {"APH": generate_secure_password()},
             "resources": {"APH": [], "Junior": [], "Senior": []},
             "members": {"APH": ["admin"], "Junior": [], "Senior": []},
             "user_progress": {"APH": {}, "Junior": {}, "Senior": {}},
@@ -44,66 +155,162 @@ class DataManager:
         }
     
     def save_data(self):
-        """Save data to JSON file"""
+        """Save data to JSON file with backup"""
         try:
+            # Create backup before saving
+            backup_name = f"{self.filename}.backup"
+            if Path(self.filename).exists():
+                shutil.copy2(self.filename, backup_name)
+            
+            # Save data
             with open(self.filename, 'w') as f:
                 json.dump(self.data, f, indent=2, default=str)
+                
         except IOError as e:
             st.error(f"Failed to save data: {e}")
+            # Restore from backup if save failed and backup exists
+            backup_name = f"{self.filename}.backup"
+            if Path(backup_name).exists():
+                try:
+                    shutil.copy2(backup_name, self.filename)
+                    st.warning("Restored from backup due to save failure")
+                except Exception:
+                    st.error("Failed to restore from backup")
     
-    def add_portal(self, role: str, password: str):
-        """Add a new portal/role"""
+    def add_portal(self, role: str, password: str) -> tuple[bool, str]:
+        """Add a new portal/role with validation"""
+        is_valid, error_msg = validate_portal_name(role)
+        if not is_valid:
+            return False, error_msg
+        
+        is_valid, error_msg = validate_password(password)
+        if not is_valid:
+            return False, error_msg
+        
+        if role in self.data["passwords"]:
+            return False, "Portal name already exists"
+        
         self.data["passwords"][role] = password
         self.data["resources"][role] = []
         self.data["members"][role] = []
         self.data["user_progress"][role] = {}
         self.save_data()
+        
+        return True, "Portal created successfully"
     
-    def remove_portal(self, role: str):
+    def remove_portal(self, role: str) -> tuple[bool, str]:
         """Remove a portal/role completely"""
-        if role in self.data["passwords"] and role != "APH":
-            del self.data["passwords"][role]
-            if role in self.data["resources"]:
-                del self.data["resources"][role]
-            if role in self.data["members"]:
-                del self.data["members"][role]
-            if role in self.data["user_progress"]:
-                del self.data["user_progress"][role]
-            # Remove custom deadlines for this role
-            keys_to_remove = [k for k in self.data["custom_deadlines"].keys() if k.startswith(f"{role}_")]
-            for key in keys_to_remove:
-                del self.data["custom_deadlines"][key]
-            self.save_data()
+        if role not in self.data["passwords"]:
+            return False, "Portal does not exist"
+        
+        if role == "APH":
+            return False, "Cannot remove APH portal"
+        
+        del self.data["passwords"][role]
+        if role in self.data["resources"]:
+            del self.data["resources"][role]
+        if role in self.data["members"]:
+            del self.data["members"][role]
+        if role in self.data["user_progress"]:
+            del self.data["user_progress"][role]
+        
+        # Remove custom deadlines for this role
+        keys_to_remove = [k for k in self.data["custom_deadlines"].keys() if k.startswith(f"{role}_")]
+        for key in keys_to_remove:
+            del self.data["custom_deadlines"][key]
+        
+        self.save_data()
+        return True, "Portal removed successfully"
     
-    def add_member(self, role: str, name: str, save: bool = True):
-        """Add a member to a role"""
-        if name not in self.data["members"][role]:
-            self.data["members"][role].append(name)
-            self.data["user_progress"][role][name] = {}
-            
-            # Set all existing resources to "Pending" for this new member
-            for resource in self.data["resources"][role]:
-                self.data["user_progress"][role][name][resource["name"]] = "Pending"
-            
-            if save:
-                self.save_data()
-    
-    def remove_member(self, role: str, name: str, save: bool = True):
-        """Remove a member from a role"""
+    def add_member(self, role: str, name: str, save: bool = True) -> tuple[bool, str]:
+        """Add a member to a role with validation"""
+        is_valid, error_msg = validate_member_name(name)
+        if not is_valid:
+            return False, error_msg
+        
+        name = name.strip()
+        
+        if role not in self.data["members"]:
+            return False, "Role does not exist"
+        
         if name in self.data["members"][role]:
-            self.data["members"][role].remove(name)
-            if name in self.data["user_progress"][role]:
-                del self.data["user_progress"][role][name]
-            
-            if save:
-                self.save_data()
+            return False, "Member already exists in this role"
+        
+        # Check if member exists in other roles
+        for other_role, members in self.data["members"].items():
+            if other_role != role and name in members:
+                return False, f"Member already exists in {other_role} role"
+        
+        self.data["members"][role].append(name)
+        self.data["user_progress"][role][name] = {}
+        
+        # Set all existing resources to "Pending" for this new member
+        for resource in self.data["resources"][role]:
+            self.data["user_progress"][role][name][resource["name"]] = "Pending"
+        
+        if save:
+            self.save_data()
+        
+        return True, "Member added successfully"
     
-    def add_resource(self, role: str, item_name: str, url: str, desc: str, priority: str, deadline: str):
-        """Add a resource to a role"""
+    def remove_member(self, role: str, name: str, save: bool = True) -> tuple[bool, str]:
+        """Remove a member from a role"""
+        if role not in self.data["members"]:
+            return False, "Role does not exist"
+        
+        if name not in self.data["members"][role]:
+            return False, "Member not found in this role"
+        
+        self.data["members"][role].remove(name)
+        if name in self.data["user_progress"][role]:
+            del self.data["user_progress"][role][name]
+        
+        if save:
+            self.save_data()
+        
+        return True, "Member removed successfully"
+    
+    def add_resource(self, role: str, item_name: str, url: str, desc: str, priority: str, deadline: str) -> tuple[bool, str]:
+        """Add a resource to a role with validation"""
+        if role not in self.data["resources"]:
+            return False, "Role does not exist"
+        
+        # Validate inputs
+        item_name = item_name.strip()
+        if not item_name:
+            return False, "Task name cannot be empty"
+        
+        if len(item_name) > 200:
+            return False, "Task name too long (max 200 characters)"
+        
+        # Check for duplicate resource names
+        existing_names = [r["name"] for r in self.data["resources"][role]]
+        if item_name in existing_names:
+            return False, "Task name already exists for this role"
+        
+        is_valid, error_msg = validate_url(url)
+        if not is_valid:
+            return False, error_msg
+        
+        if not desc.strip():
+            return False, "Description cannot be empty"
+        
+        if len(desc) > 1000:
+            return False, "Description too long (max 1000 characters)"
+        
+        if priority.lower() not in ['low', 'medium', 'high']:
+            return False, "Priority must be Low, Medium, or High"
+        
+        # Validate deadline
+        try:
+            datetime.strptime(deadline, "%Y-%m-%d")
+        except ValueError:
+            return False, "Invalid deadline format"
+        
         resource = {
-            "name": item_name,
-            "url": url,
-            "description": desc,
+            "name": sanitize_html(item_name),
+            "url": url.strip(),
+            "description": sanitize_html(desc.strip()),
             "priority": priority.lower(),
             "deadline": deadline
         }
@@ -115,9 +322,18 @@ class DataManager:
             self.data["user_progress"][role][member][item_name] = "Pending"
         
         self.save_data()
+        return True, "Task added successfully"
     
-    def remove_resource(self, role: str, item_name: str):
+    def remove_resource(self, role: str, item_name: str) -> tuple[bool, str]:
         """Remove a resource from a role"""
+        if role not in self.data["resources"]:
+            return False, "Role does not exist"
+        
+        # Check if resource exists
+        resource_exists = any(r["name"] == item_name for r in self.data["resources"][role])
+        if not resource_exists:
+            return False, "Task not found"
+        
         self.data["resources"][role] = [r for r in self.data["resources"][role] if r["name"] != item_name]
         
         # Remove from all members' progress
@@ -125,11 +341,19 @@ class DataManager:
             if item_name in self.data["user_progress"][role][member]:
                 del self.data["user_progress"][role][member][item_name]
         
+        # Remove custom deadline if exists
+        item_key = f"{role}_{item_name}"
+        if item_key in self.data["custom_deadlines"]:
+            del self.data["custom_deadlines"][item_key]
+        
         self.save_data()
+        return True, "Task removed successfully"
     
     def update_progress(self, role: str, name: str, item_name: str, new_status: str):
         """Update progress status for a user"""
-        if role in self.data["user_progress"] and name in self.data["user_progress"][role]:
+        if (role in self.data["user_progress"] and 
+            name in self.data["user_progress"][role] and
+            new_status in ["Pending", "Completed"]):
             self.data["user_progress"][role][name][item_name] = new_status
             self.save_data()
     
@@ -144,15 +368,21 @@ class DataManager:
                 return resource["deadline"]
         return None
     
-    def update_deadline(self, role: str, item_name: str, new_deadline: str):
+    def update_deadline(self, role: str, item_name: str, new_deadline: str) -> tuple[bool, str]:
         """Update deadline for a specific item"""
+        try:
+            datetime.strptime(new_deadline, "%Y-%m-%d")
+        except ValueError:
+            return False, "Invalid deadline format"
+        
         item_key = f"{role}_{item_name}"
         self.data["custom_deadlines"][item_key] = new_deadline
         self.save_data()
+        return True, "Deadline updated successfully"
 
 # --- BULK TEXT INPUT FUNCTIONS ---
 def parse_bulk_text_members(text_input: str, default_role: str = None) -> List[str]:
-    """Parse bulk text input and extract member names"""
+    """Parse bulk text input and extract member names with validation"""
     if not text_input.strip():
         return []
     
@@ -172,53 +402,84 @@ def parse_bulk_text_members(text_input: str, default_role: str = None) -> List[s
             # Use entire line as name
             name = line
         
-        if name and name not in members:  # Avoid duplicates
+        # Validate member name
+        is_valid, _ = validate_member_name(name)
+        if is_valid and name not in members:  # Avoid duplicates
             members.append(name)
     
     return members
 
-def sync_members_from_text(data_manager: DataManager, role: str, new_members: List[str]):
+def sync_members_from_text(data_manager: DataManager, role: str, new_members: List[str]) -> tuple[bool, str]:
     """Sync members from text input while preserving progress"""
     if role not in data_manager.data["members"]:
-        return False
+        return False, "Role does not exist"
+    
+    # Validate all member names first
+    for member in new_members:
+        is_valid, error_msg = validate_member_name(member)
+        if not is_valid:
+            return False, f"Invalid member name '{member}': {error_msg}"
     
     old_members = set(data_manager.data["members"][role])
     new_members_set = set(new_members)
     
     # Add new members
     for member in new_members_set - old_members:
-        data_manager.add_member(role, member, save=False)
+        success, msg = data_manager.add_member(role, member, save=False)
+        if not success:
+            return False, f"Failed to add {member}: {msg}"
     
     # Remove old members
     for member in old_members - new_members_set:
-        data_manager.remove_member(role, member, save=False)
+        success, msg = data_manager.remove_member(role, member, save=False)
+        if not success:
+            return False, f"Failed to remove {member}: {msg}"
     
     # Update order to match input
     data_manager.data["members"][role] = new_members
     data_manager.save_data()
     
-    return True
+    return True, "Members synced successfully"
 
 # --- AUTHENTICATION ---
 def authenticate_user(password: str, data_manager: DataManager) -> Optional[str]:
     """Authenticate user and return role"""
+    if not password:
+        return None
+    
     for role, pw in data_manager.data["passwords"].items():
         if password == pw:
             return role
     return None
 
 def init_session_state():
-    """Initialize session state variables"""
+    """Initialize session state variables with error handling"""
     if "role" not in st.session_state:
         st.session_state.role = None
     if "name" not in st.session_state:
         st.session_state.name = None
     if "data_manager" not in st.session_state:
-        st.session_state.data_manager = DataManager()
+        try:
+            st.session_state.data_manager = DataManager()
+        except Exception as e:
+            st.error(f"Failed to initialize data manager: {e}")
+            st.session_state.data_manager = None
+            return False
+    
+    return True
 
 # --- UI COMPONENTS ---
 def render_login_page():
     """Render the login page"""
+    data_manager = st.session_state.data_manager
+    
+    # Show admin password if it's newly generated
+    if "APH" in data_manager.data["passwords"]:
+        admin_password = data_manager.data["passwords"]["APH"]
+        if len(admin_password) == 12:  # Likely generated password
+            st.info(f"🔑 **Admin Password**: {admin_password}")
+            st.warning("⚠️ Save this password! It won't be shown again after refresh.")
+    
     st.markdown("""
     <div style="text-align: center; padding: 2rem 0;">
         <h1>🐉 Dragonboat Team Portal</h1>
@@ -239,7 +500,7 @@ def render_login_page():
         
         if st.button("Login", type="primary", use_container_width=True):
             if password:
-                role = authenticate_user(password, st.session_state.data_manager)
+                role = authenticate_user(password, data_manager)
                 if role:
                     st.session_state.role = role
                     st.success(f"✅ Welcome to the {role} Portal!")
@@ -269,7 +530,7 @@ def render_name_selection():
         st.rerun()
 
 def render_resource_card(resource: Dict, index: int):
-    """Render an individual resource card"""
+    """Render an individual resource card with improved error handling"""
     data_manager = st.session_state.data_manager
     role = st.session_state.role
     name = st.session_state.name
@@ -280,7 +541,7 @@ def render_resource_card(resource: Dict, index: int):
     st.markdown(f"#### {priority_emoji} {resource['name']}")
     st.write(resource.get("description", "No description available"))
     
-    # Deadline warning
+    # Deadline warning with improved error handling
     deadline = data_manager.get_effective_deadline(role, resource["name"])
     if deadline:
         try:
@@ -293,8 +554,8 @@ def render_resource_card(resource: Dict, index: int):
                 st.warning(f"⏰ Due in {days_left} days (Deadline: {deadline})")
             else:
                 st.info(f"📅 Deadline: {deadline} ({days_left} days remaining)")
-        except ValueError:
-            st.info(f"📅 Deadline: {deadline}")
+        except (ValueError, TypeError) as e:
+            st.warning(f"Invalid deadline format: {deadline}")
     
     # Resource link
     if resource.get("url"):
@@ -380,16 +641,24 @@ def render_member_management_tab(data_manager: DataManager):
     with col2:
         if st.button("🔄 Update All Members", type="primary", use_container_width=True):
             updated_roles = []
+            errors = []
             
             for role, new_members in member_updates.items():
-                if sync_members_from_text(data_manager, role, new_members):
+                success, msg = sync_members_from_text(data_manager, role, new_members)
+                if success:
                     updated_roles.append(role)
+                else:
+                    errors.append(f"{role}: {msg}")
             
             if updated_roles:
                 st.success(f"🎉 Successfully updated members for: {', '.join(updated_roles)}")
+            
+            if errors:
+                for error in errors:
+                    st.error(f"❌ {error}")
+            
+            if updated_roles:
                 st.rerun()
-            else:
-                st.error("Failed to update members")
     
     # Current members overview
     st.markdown("#### 👥 Current Members Overview")
@@ -405,7 +674,7 @@ def render_aph_dashboard():
     """Render the APH admin dashboard"""
     data_manager = st.session_state.data_manager
     
-    st.markdown("""
+    st.markdown(f"""
     <div style="background: linear-gradient(90deg, #8b0000, #dc143c); 
                 color: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem;">
         <h1>🛡️ APH Admin Portal</h1>
@@ -426,16 +695,29 @@ def render_aph_dashboard():
             st.markdown("#### ➕ Add New Portal")
             with st.form("add_portal_form"):
                 new_portal_name = st.text_input("Portal Name", placeholder="e.g., Advanced Team")
-                new_password = st.text_input("Password", type="password", placeholder="Enter secure password")
+                
+                # Password generation option
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    auto_generate = st.checkbox("Auto-generate secure password", value=True)
+                
+                if auto_generate:
+                    new_password = generate_secure_password()
+                    st.code(f"Generated password: {new_password}")
+                else:
+                    new_password = st.text_input("Password", type="password", placeholder="Enter secure password")
                 
                 if st.form_submit_button("Add Portal", type="primary"):
                     if new_portal_name and new_password:
-                        if new_portal_name not in data_manager.data["passwords"]:
-                            data_manager.add_portal(new_portal_name, new_password)
-                            st.success(f"✅ Portal '{new_portal_name}' created successfully!")
+                        success, msg = data_manager.add_portal(new_portal_name, new_password)
+                        if success:
+                            st.success(f"✅ {msg}")
+                            if auto_generate:
+                                st.info(f"🔑 **Password for {new_portal_name}**: {new_password}")
+                                st.warning("⚠️ Save this password! It won't be shown again.")
                             st.rerun()
                         else:
-                            st.error("Portal name already exists!")
+                            st.error(f"❌ {msg}")
                     else:
                         st.error("Please fill in all fields.")
         
@@ -451,9 +733,12 @@ def render_aph_dashboard():
                     
                     if st.form_submit_button("Remove Portal", type="secondary"):
                         if confirm_removal:
-                            data_manager.remove_portal(portal_to_remove)
-                            st.success(f"✅ Portal '{portal_to_remove}' removed successfully!")
-                            st.rerun()
+                            success, msg = data_manager.remove_portal(portal_to_remove)
+                            if success:
+                                st.success(f"✅ {msg}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {msg}")
                         else:
                             st.error("Please confirm the removal by checking the checkbox.")
             else:
@@ -485,20 +770,23 @@ def render_aph_dashboard():
                 st.markdown("#### ➕ Add Task")
                 with st.form("add_task_form"):
                     role = st.selectbox("Portal", available_roles)
-                    item_name = st.text_input("Task Name")
-                    url = st.text_input("URL")
-                    description = st.text_area("Description")
+                    item_name = st.text_input("Task Name", max_chars=200)
+                    url = st.text_input("URL", placeholder="https://example.com")
+                    description = st.text_area("Description", max_chars=1000)
                     priority = st.selectbox("Priority", ["Low", "Medium", "High"])
                     deadline = st.date_input("Deadline", value=datetime.now().date())
                     
                     if st.form_submit_button("Add Task", type="primary"):
                         if item_name and url and description:
-                            data_manager.add_resource(
+                            success, msg = data_manager.add_resource(
                                 role, item_name, url, description, 
                                 priority, deadline.strftime("%Y-%m-%d")
                             )
-                            st.success(f"✅ Task '{item_name}' added to {role}!")
-                            st.rerun()
+                            if success:
+                                st.success(f"✅ {msg}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {msg}")
                         else:
                             st.error("Please fill in all required fields.")
             
@@ -516,9 +804,12 @@ def render_aph_dashboard():
                         item_name_remove = st.selectbox("Task", resource_names)
                         
                         if st.form_submit_button("Remove Task", type="secondary"):
-                            data_manager.remove_resource(role_remove, item_name_remove)
-                            st.success(f"✅ Task '{item_name_remove}' removed!")
-                            st.rerun()
+                            success, msg = data_manager.remove_resource(role_remove, item_name_remove)
+                            if success:
+                                st.success(f"✅ {msg}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {msg}")
                     else:
                         st.write("No tasks available for this portal.")
             
@@ -554,7 +845,10 @@ def render_aph_dashboard():
                     
                     with col2:
                         current_deadline = data_manager.get_effective_deadline(role, resource["name"])
-                        default_date = datetime.strptime(current_deadline, "%Y-%m-%d").date() if current_deadline else datetime.now().date()
+                        try:
+                            default_date = datetime.strptime(current_deadline, "%Y-%m-%d").date() if current_deadline else datetime.now().date()
+                        except (ValueError, TypeError):
+                            default_date = datetime.now().date()
                         
                         new_date = st.date_input(
                             "Deadline",
@@ -562,11 +856,15 @@ def render_aph_dashboard():
                             key=f"date_{role}_{resource['name']}",
                             label_visibility="collapsed"
                         )
-                        
+                    
+                    with col3:
                         if st.button("Set", key=f"set_{role}_{resource['name']}"):
-                            data_manager.update_deadline(role, resource["name"], new_date.strftime("%Y-%m-%d"))
-                            st.success("Updated!")
-                            st.rerun()
+                            success, msg = data_manager.update_deadline(role, resource["name"], new_date.strftime("%Y-%m-%d"))
+                            if success:
+                                st.success("Updated!")
+                                st.rerun()
+                            else:
+                                st.error(msg)
 
     
     # Data Export Tab
@@ -586,43 +884,54 @@ def render_aph_dashboard():
                         current_members[role] = data_manager.data["members"][role]
                 
                 if current_members:
-                    # Create CSV
-                    output = io.StringIO()
-                    
-                    # Find max length for padding
-                    max_len = max(len(members) for members in current_members.values())
-                    
-                    # Pad all lists to same length
-                    for role in current_members:
-                        while len(current_members[role]) < max_len:
-                            current_members[role].append('')
-                    
-                    # Write CSV
-                    writer = csv.writer(output)
-                    writer.writerow(current_members.keys())  # Headers
-                    for i in range(max_len):
-                        row = [current_members[role][i] for role in current_members.keys()]
-                        writer.writerow(row)
-                    
-                    st.download_button(
-                        label="📥 Download Current Members CSV",
-                        data=output.getvalue(),
-                        file_name=f"current_members_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                        mime="text/csv"
-                    )
+                    try:
+                        # Create CSV
+                        output = io.StringIO()
+                        
+                        # Find max length for padding
+                        max_len = max(len(members) for members in current_members.values())
+                        
+                        # Pad all lists to same length
+                        for role in current_members:
+                            while len(current_members[role]) < max_len:
+                                current_members[role].append('')
+                        
+                        # Write CSV
+                        writer = csv.writer(output)
+                        writer.writerow(current_members.keys())  # Headers
+                        for i in range(max_len):
+                            row = [current_members[role][i] for role in current_members.keys()]
+                            writer.writerow(row)
+                        
+                        st.download_button(
+                            label="📥 Download Current Members CSV",
+                            data=output.getvalue(),
+                            file_name=f"current_members_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                            mime="text/csv"
+                        )
+                    except Exception as e:
+                        st.error(f"Failed to generate CSV: {e}")
                 else:
                     st.info("No members to export.")
         
         with col2:
             st.markdown("#### 🗃️ Export System Data")
             if st.button("📊 Generate JSON Backup"):
-                json_str = json.dumps(data_manager.data, indent=2, default=str)
-                st.download_button(
-                    label="📥 Download JSON Backup",
-                    data=json_str,
-                    file_name=f"portal_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                    mime="application/json"
-                )
+                try:
+                    # Create a clean copy without sensitive data for backup
+                    backup_data = data_manager.data.copy()
+                    # Optionally remove passwords from backup (uncomment if needed)
+                    # backup_data["passwords"] = {role: "***HIDDEN***" for role in backup_data["passwords"]}
+                    
+                    json_str = json.dumps(backup_data, indent=2, default=str)
+                    st.download_button(
+                        label="📥 Download JSON Backup",
+                        data=json_str,
+                        file_name=f"portal_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                        mime="application/json"
+                    )
+                except Exception as e:
+                    st.error(f"Failed to generate backup: {e}")
 
 def render_team_dashboard():
     """Render team member dashboard"""
@@ -630,11 +939,15 @@ def render_team_dashboard():
     role = st.session_state.role
     name = st.session_state.name
     
+    # Sanitize display values
+    safe_role = sanitize_html(role)
+    safe_name = sanitize_html(name)
+    
     st.markdown(f"""
     <div style="background: linear-gradient(90deg, #1f4e79, #2e86de); 
                 color: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem;">
-        <h1>🐉 {role} Portal</h1>
-        <p>Welcome, {name}!</p>
+        <h1>🐉 {safe_role} Portal</h1>
+        <p>Welcome, {safe_name}!</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -668,7 +981,20 @@ def render_team_dashboard():
     
     with tab1:
         if pending_resources:
-            for i, resource in enumerate(pending_resources):
+            # Sort by priority and deadline
+            def sort_key(resource):
+                priority_order = {"high": 0, "medium": 1, "low": 2}
+                try:
+                    deadline = data_manager.get_effective_deadline(role, resource["name"])
+                    deadline_date = datetime.strptime(deadline, "%Y-%m-%d") if deadline else datetime.max
+                except (ValueError, TypeError):
+                    deadline_date = datetime.max
+                
+                return (priority_order.get(resource.get("priority", "low"), 3), deadline_date)
+            
+            sorted_resources = sorted(pending_resources, key=sort_key)
+            
+            for i, resource in enumerate(sorted_resources):
                 render_resource_card(resource, i)
         else:
             st.success("🎉 All tasks completed!")
@@ -712,10 +1038,20 @@ def main():
     .stApp > header {visibility: hidden;}
     .stDeployButton {display: none;}
     footer {visibility: hidden;}
+    .stAlert > div {
+        padding: 0.5rem 1rem;
+    }
     </style>
     """, unsafe_allow_html=True)
     
-    init_session_state()
+    # Initialize session state with error handling
+    if not init_session_state():
+        st.error("Failed to initialize application. Please refresh the page.")
+        return
+    
+    if st.session_state.data_manager is None:
+        st.error("Data manager not available. Please refresh the page.")
+        return
     
     if st.session_state.role is None:
         render_login_page()
@@ -728,15 +1064,14 @@ def main():
         col1, col2 = st.columns([3, 1])
         
         with col1:
-            st.markdown("<small>🐉 Dragonboat Team Portal v4.0 - Bulk Text Input Edition</small>", unsafe_allow_html=True)
+            st.markdown("<small>🐉 Dragonboat Team Portal v5.0 - Secure Edition</small>", unsafe_allow_html=True)
         
         with col2:
             if st.button("🔓 Logout"):
-                st.session_state.clear()
+                # Clear session state properly
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
                 st.rerun()
 
 if __name__ == "__main__":
     main()
-
-
-
