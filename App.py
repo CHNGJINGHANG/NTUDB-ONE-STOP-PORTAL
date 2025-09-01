@@ -559,15 +559,15 @@ def render_aph_dashboard():
                         new_date = st.date_input(
                             "Deadline",
                             value=default_date,
-                            key=f"deadline_{role}_{resource['name']}",
+                            key=f"date_{role}_{resource['name']}",
                             label_visibility="collapsed"
                         )
-                    
-                    with col3:
-                        if st.button("Set", key=f"set_deadline_{role}_{resource['name']}"):
+                        
+                        if st.button("Set", key=f"set_{role}_{resource['name']}"):
                             data_manager.update_deadline(role, resource["name"], new_date.strftime("%Y-%m-%d"))
                             st.success("Updated!")
                             st.rerun()
+
     
     # Data Export Tab
     with tab5:
@@ -737,5 +737,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
