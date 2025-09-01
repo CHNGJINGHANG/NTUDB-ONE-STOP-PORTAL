@@ -95,12 +95,7 @@ def sanitize_html(text: str) -> str:
         text = text.replace(char, replacement)
     
     return text
-
-def generate_secure_password(length: int = 12) -> str:
-    """Generate a secure random password"""
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-    password = ''.join(secrets.choice(alphabet) for _ in range(length))
-    return password
+###here
 
 # --- DATA MANAGER ---
 class DataManager:
@@ -124,19 +119,30 @@ class DataManager:
         return filename
     
     def load_data(self) -> Dict:
-        """Load data from JSON file or create default structure"""
         if Path(self.filename).exists():
             try:
                 with open(self.filename, 'r') as f:
                     data = json.load(f)
-                    # Ensure all required keys exist
-                    default_structure = {
-                        "passwords": {"APH": generate_secure_password()},
-                        "resources": {"APH": [], "Junior": [], "Senior": []},
-                        "members": {"APH": ["admin"], "Junior": [], "Senior": []},
-                        "user_progress": {"APH": {}, "Junior": {}, "Senior": {}},
-                        "custom_deadlines": {}
-                    }
+                # Ensure all required keys exist (keep this part)
+                ...
+                return data
+            except (json.JSONDecodeError, IOError) as e:
+                st.error(f"Failed to load data file: {e}")
+                st.info("Creating new data file...")
+        # At this point, we're creating new data
+        admin_password = st.text_input("Set Admin Password (APH)", type="password")
+        valid, error = validate_password(admin_password)
+        if not admin_password or not valid:
+            st.warning("Please enter a strong password for admin. " + error)
+            st.stop()   # Prevent app from continuing until a valid password is set
+        return {
+            "passwords": {"APH": admin_password},
+            "resources": {"APH": [], "Junior": [], "Senior": []},
+            "members": {"APH": ["admin"], "Junior": [], "Senior": []},
+            "user_progress": {"APH": {}, "Junior": {}, "Senior": {}},
+            "custom_deadlines": {},
+        }
+
                     for key, value in default_structure.items():
                         if key not in data:
                             data[key] = value
@@ -1075,3 +1081,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
