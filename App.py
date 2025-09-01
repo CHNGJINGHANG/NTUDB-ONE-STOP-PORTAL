@@ -21,7 +21,7 @@ class DataManager:
                     data = json.load(f)
                     # Ensure all required keys exist
                     default_structure = {
-                        "passwords": {"APH": "NTUDB#1314998"},
+                        "passwords": {"APH": "NTUDB#247365"},
                         "resources": {"APH": [], "Junior": [], "Senior": []},
                         "members": {"APH": ["admin"], "Junior": [], "Senior": []},
                         "user_progress": {"APH": {}, "Junior": {}, "Senior": {}},
@@ -737,3 +737,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
