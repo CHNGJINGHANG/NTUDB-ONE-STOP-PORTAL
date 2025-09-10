@@ -17,8 +17,8 @@ class OTPManager:
     
     AUTHORIZED_EMAILS = [
         "CHNG0145@e.ntu.edu.sg",
-        "admin@example.com",
-        "admin2@example.com"
+        "jingyuw7@gmail.com",
+        "Tedphua@gmail.com"
     ]
     
     def __init__(self):
@@ -848,4 +848,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
