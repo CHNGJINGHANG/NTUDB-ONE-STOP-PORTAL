@@ -500,7 +500,7 @@ def render_name_selection():
     data_manager = st.session_state.data_manager
     
     st.markdown(f"### Welcome to {role} Portal")
-    st.markdown("Please select or enter your name:")
+    st.markdown("Please select:")
     
     existing_members = data_manager.data["members"].get(role, [])
     
@@ -510,16 +510,6 @@ def render_name_selection():
             st.session_state.name = selected_name
             st.rerun()
     
-    st.markdown("Or enter new name:")
-    new_name = st.text_input("Your name:")
-    
-    if st.button("Continue"):
-        if new_name:
-            data_manager.add_member(role, new_name)
-            st.session_state.name = new_name
-            st.rerun()
-        else:
-            st.warning("Please enter your name")
 
 def render_aph_dashboard():
     """APH admin dashboard"""
@@ -858,3 +848,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
