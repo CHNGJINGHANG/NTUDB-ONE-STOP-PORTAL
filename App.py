@@ -312,13 +312,18 @@ class ChatGPTHelper:
         try:
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
                 json={
-                    "model": "gpt-3.5-turbo",
+                    "model": "gpt-4o-mini",  # safer, lighter model
                     "messages": [{"role": "user", "content": full_prompt}],
                     "max_tokens": 1000
-                }
+                },
+                timeout=30  # prevent hanging
             )
+
             
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
@@ -848,5 +853,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
