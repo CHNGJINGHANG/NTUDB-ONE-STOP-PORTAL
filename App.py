@@ -358,7 +358,7 @@ def render_announcements(role: str, data_manager: DataManager):
             if ann.get("image_data"):
                 try:
                     image_bytes = base64.b64decode(ann["image_data"])
-                    st.image(image_bytes, use_column_width=True)
+                    st.image(image_bytes, use_container_width=True)
                 except:
                     st.error("Image display failed")
             st.write(ann["content"])
@@ -853,4 +853,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
